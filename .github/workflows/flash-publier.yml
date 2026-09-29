@@ -1,0 +1,130 @@
+name: Vrai flash — publication
+
+# Déclenché par le PC (E:\01-flash-infos\flash_auto\flash_auto.py) une fois la
+# vidéo fabriquée par Agnes et déposée sur bastaps/algeria-tech-videos/flash/.
+# Publication directe, sans validation (décision du 29/09). Un flash raté n'est
+# jamais publié : le widget garde le précédent. Pour retirer un flash publié :
+# workflow « Vrai flash — retirer le dernier ».
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "Identifiant de la vidéo (flash/<id>.mp4 sur le dépôt vidéos)"
+        required: true
+      titre:
+        description: "Titre affiché dans le widget"
+        required: true
+      duree:
+        description: "Durée en secondes"
+        required: true
+      texte:
+        description: "Texte lu"
+        required: false
+        default: ""
+      lang:
+        description: "Langue (fr / ar)"
+        required: false
+        default: "fr"
+      cree:
+        description: "Date de fabrication (ISO, UTC)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flash-publier
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: bastaps/algeria-tech
+          ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
+          fetch-depth: 1
+
+      - name: Ajout au widget Flash Info
+        env:
+          ID: ${{ inputs.id }}
+          TITRE: ${{ inputs.titre }}
+          TEXTE: ${{ inputs.texte }}
+          DUREE: ${{ inputs.duree }}
+          LANGUE: ${{ inputs.lang }}
+          CREE: ${{ inputs.cree }}
+          CANAL: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          # notification sur le téléphone (appli ntfy) — Python pour un UTF-8 fiable
+          notifier() {
+            python3 -c 'import os,sys,urllib.request as u; h={"Title":sys.argv[1].encode(),"Tags":sys.argv[3]}; h.update({"Click":sys.argv[4]} if len(sys.argv)>4 and sys.argv[4] else {}); u.urlopen(u.Request("https://ntfy.sh/"+os.environ["CANAL"],data=sys.argv[2].encode(),headers=h),timeout=20)' "$@" || true
+          }
+          # la vidéo doit être en ligne avant d'être annoncée dans le widget
+          url="https://bastaps.github.io/algeria-tech-videos/flash/$ID.mp4"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -r 0-99 -w "%{http_code}" "$url")
+            [ "$code" = "206" ] || [ "$code" = "200" ] && break
+            sleep 10
+          done
+          if [ "$code" != "206" ] && [ "$code" != "200" ]; then
+            echo "Vidéo introuvable ($code) : flash non publié, le précédent reste en ligne."
+            notifier "❌ Flash non publié" "La vidéo « $TITRE » n'est pas accessible en ligne. Le flash précédent reste sur le site." x
+            exit 1
+          fi
+          python3 - <<'EOF'
+          import json, os, sys
+          from datetime import datetime, timezone, timedelta
+          maintenant = datetime.now(timezone.utc)
+          cree = datetime.fromisoformat(os.environ["CREE"].replace("Z", "+00:00"))
+          if maintenant - cree > timedelta(hours=8):
+              print("Flash trop ancien (plus de 8 h) : non publié.")
+              sys.exit(0)
+          chemin = "data/flash-latest.json"
+          try:
+              liste = json.load(open(chemin, encoding="utf-8"))
+          except Exception:
+              liste = []
+          ident = os.environ["ID"]
+          entree = {
+              "id": ident,
+              "titre": os.environ["TITRE"][:80],
+              "mp4Url": f"https://bastaps.github.io/algeria-tech-videos/flash/{ident}.mp4",
+              "duration": float(os.environ["DUREE"] or 0),
+              "publishedAt": maintenant.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+              "lang": os.environ.get("LANGUE") or "fr",
+          }
+          limite = maintenant - timedelta(days=7)
+          def recent(e):
+              try:
+                  return datetime.fromisoformat(e["publishedAt"].replace("Z", "+00:00")) > limite
+              except Exception:
+                  return False
+          liste = [entree] + [e for e in liste if e.get("id") != ident and recent(e)]
+          json.dump(liste[:6], open(chemin, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          print("Publié :", entree["titre"])
+          EOF
+          {
+            echo "## 🎬 Flash publié : $TITRE"
+            echo
+            echo "Vidéo : $url (${DUREE} s)"
+            echo
+            echo "$TEXTE"
+            echo
+            echo "Pour le retirer : Actions → « Vrai flash — retirer le dernier » → Run workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "actions-user"
+          git config user.email "actions@github.com"
+          git add data/flash-latest.json
+          git commit -m "Auto: vrai flash publié [$(date -u +%H:%M) UTC]" || exit 0
+          ok=non
+          for i in 1 2 3; do
+            git pull --rebase -q origin main && git push -q origin HEAD:main && ok=oui && break
+            sleep 5
+          done
+          if [ "$ok" = oui ]; then
+            notifier "✅ Flash publié" "« $TITRE » (${DUREE} s) — en ligne sur algeria-tech.pages.dev d'ici 3 à 5 min. Touchez pour voir la vidéo." white_check_mark "$url"
+          else
+            notifier "❌ Flash non publié" "« $TITRE » : échec d'enregistrement sur GitHub. Le flash précédent reste en ligne." x
+            exit 1
+          fi

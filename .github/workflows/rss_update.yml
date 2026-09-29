@@ -1,0 +1,41 @@
+name: Actualisation Flux RSS
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # Toutes les 4 heures (rss-parser direct, pas de quota API)
+  workflow_dispatch: # Permet de le lancer manuellement
+
+permissions:
+  contents: write # CETTE LIGNE EST ESSENTIELLE POUR AUTORISER LE PUSH
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v3
+        with:
+          repository: bastaps/algeria-tech
+          ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
+
+      - name: Installation de Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Installation des dépendances
+        run: npm ci
+
+      - name: Mise à jour de la veille
+        run: node update_veille.js
+
+      - name: Génération des flux RSS thématiques
+        run: node generate_rss_themes.js
+
+      - name: Sauvegarde des changements sur GitHub
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add veille_data.json feeds/
+          git commit -m "Automatique: Mise à jour flux RSS + flux thématiques" || echo "Pas de changements"
+          git push

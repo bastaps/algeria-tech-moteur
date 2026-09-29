@@ -1,0 +1,50 @@
+name: Algeria Tech Daily Update
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Exécution automatique tous les jours à 06:00 UTC
+  workflow_dispatch: # Permet de lancer la mise à jour manuellement depuis l'onglet Actions
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: bastaps/algeria-tech
+          ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Veille Update
+        run: node update_veille.js
+
+      # Revue de presse retirée d'ici (2026-09-05) : revue-presse.yml s'en charge déjà
+      # à 04:00 UTC avec les 5 fournisseurs IA (Mistral/Gemini/OpenRouter/OpenAI/DeepSeek).
+      # Ce job ne recevait que MISTRAL_API_KEY et écrasait la bonne édition de
+      # revue-presse.yml par un repli "moteurs indisponibles" dès que Mistral était
+      # rate-limité (fréquent) — cause du blocage constaté sur algeria-tech.pages.dev.
+
+      - name: Sync Articles Database
+        run: node build.js
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "Algeria Tech Bot"
+          mkdir -p archives
+          cp revue_presse.json archives/$(date +%Y-%m-%d).json
+          git add veille_data.json revue_presse.json articles.json archives/
+          git commit -m "🤖 Auto-update: Veille, Revue de Presse & Articles [$(date +%Y-%m-%d)]" || echo "Rien à commiter"
+          git push
