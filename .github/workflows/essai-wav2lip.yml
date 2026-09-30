@@ -1,0 +1,59 @@
+name: Essai D — Wav2Lip sur processeur (sans carte graphique)
+
+# Essai ponctuel : resynchronise la bouche de Rachid Basta sur la voix Henri,
+# sur un serveur GitHub gratuit. Mesure le temps de calcul et produit 2 vidéos.
+on:
+  workflow_dispatch:
+
+jobs:
+  essai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Installation (Wav2Lip + dépendances, processeur seul)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          git clone --depth 1 https://github.com/Rudrabha/Wav2Lip.git w2l
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q numpy==1.23.5 numba==0.58.1 librosa==0.10.1 "scipy<1.12" opencv-python-headless==4.8.1.78 tqdm
+          # correctifs de compatibilité (librosa et torch récents)
+          sed -i 's/librosa.filters.mel(hp.sample_rate, hp.n_fft, n_mels=hp.num_mels,/librosa.filters.mel(sr=hp.sample_rate, n_fft=hp.n_fft, n_mels=hp.num_mels,/' w2l/audio.py
+          sed -i 's/map_location=lambda storage, loc: storage)/map_location=lambda storage, loc: storage, weights_only=False)/' w2l/inference.py
+          grep -n "librosa.filters.mel" w2l/audio.py
+          grep -n "weights_only" w2l/inference.py || true
+
+      - name: Poids du modèle
+        run: |
+          curl -sL -o wav2lip_gan.pth "https://huggingface.co/numz/wav2lip_studio/resolve/main/Wav2lip/wav2lip_gan.pth"
+          curl -sL -o w2l/face_detection/detection/sfd/s3fd.pth "https://huggingface.co/camenduru/Wav2Lip/resolve/main/face_detection/detection/sfd/s3fd.pth"
+          ls -la wav2lip_gan.pth w2l/face_detection/detection/sfd/s3fd.pth
+
+      - name: Resynchronisation labiale (accueil puis conclusion)
+        run: |
+          mkdir -p sorties
+          cd w2l
+          for n in intro outro; do
+            echo "===== $n"
+            start=$(date +%s)
+            python inference.py --checkpoint_path ../wav2lip_gan.pth \
+              --face ../essai_d/base_$n.mp4 --audio ../essai_d/voix_$n.wav \
+              --outfile ../sorties/${n}_wav2lip.mp4 --face_det_batch_size 8 --wav2lip_batch_size 32 2>&1 | tail -5
+            fin=$(date +%s)
+            echo "TEMPS_$n=$((fin - start)) s" | tee -a ../sorties/temps.txt
+          done
+          cd ..
+          ls -la sorties
+          {
+            echo "## Essai D — Wav2Lip sur processeur"
+            cat sorties/temps.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resultats-wav2lip
+          path: sorties/
