@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "0 5,9,14 * * *"
   workflow_dispatch:
+    inputs:
+      publier:
+        description: "Publier sur le site (oui) ou seulement fabriquer la vidéo à regarder (non)"
+        default: "oui"
 
 permissions:
   contents: write
@@ -57,8 +61,16 @@ jobs:
           [ $code -eq 0 ] && echo "publier=oui" >> "$GITHUB_OUTPUT"
           exit $code
 
-      - name: Copie du dépôt vidéos
+      - name: Vidéo en artefact (relecture)
         if: steps.fab.outputs.publier == 'oui'
+        uses: actions/upload-artifact@v4
+        with:
+          name: express
+          path: express-out/
+          retention-days: 7
+
+      - name: Copie du dépôt vidéos
+        if: steps.fab.outputs.publier == 'oui' && github.event.inputs.publier != 'non'
         uses: actions/checkout@v4
         with:
           repository: bastaps/algeria-tech-videos
@@ -67,7 +79,7 @@ jobs:
           fetch-depth: 1
 
       - name: Publication sur le site
-        if: steps.fab.outputs.publier == 'oui'
+        if: steps.fab.outputs.publier == 'oui' && github.event.inputs.publier != 'non'
         env:
           VIDEOS_REPO_DIR: videos-repo
         run: |
