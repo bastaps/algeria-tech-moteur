@@ -5,10 +5,10 @@ name: Flash Info JT (Rachid + Pexels)
 # Publication directe dans le widget « Flash Info » du site (retrait en 1 clic avec
 # « Vrai flash — retirer le dernier »). Un flash raté n'est jamais publié : le précédent reste.
 #
-# Lancement MANUEL pour l'instant. Après validation du rendu, ajouter :
-#   schedule:
-#     - cron: "0 6,11,15 * * *"     # 7 h, 12 h, 16 h heure d'Algérie (UTC+1)
+# Lancement automatique à 7 h, 12 h et 16 h (heure d'Algérie, UTC+1) + lancement manuel possible.
 on:
+  schedule:
+    - cron: "0 6,11,15 * * *"
   workflow_dispatch:
     inputs:
       publier:
@@ -101,7 +101,7 @@ jobs:
           retention-days: 7
 
       - name: Publication sur le site
-        if: steps.fab.outputs.ok == 'oui' && inputs.publier != 'non'
+        if: steps.fab.outputs.ok == 'oui' && github.event.inputs.publier != 'non'
         env:
           CANAL: ${{ secrets.NTFY_TOPIC }}
         run: |
